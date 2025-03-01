@@ -6,17 +6,18 @@ import (
 	"time"
 )
 
+var Bullies []ServerConnection // all of the bully nodes
+var BullyIDS []int
+
 // BullyNode represents a single node in the cluster
 type BullyNode struct {
-	mutex   sync.Mutex // prevent race condition when multiple nodes tries to access shared data at once
-	selfID  int
-	otherID []int // how can I do a list of ints?
+	mutex  sync.Mutex // prevent race condition when multiple nodes tries to access shared data at once
+	selfID int
 
 	leaderID int
 	myPort   string
 	state    string //"Normal", "Election", "Leader"
 
-	otherNodes             []ServerConnection // how can we do that for all other nodes?
 	notifiedAllHigherNodes bool
 
 	electionTimeout         *time.Timer
