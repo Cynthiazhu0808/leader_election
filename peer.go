@@ -23,6 +23,7 @@ type RingNode struct {
 	nextNode        ServerConnection
 	nominatedSelf   bool
 	electionTimeout *time.Timer
+	highestSeenID   int
 }
 
 // RingVote contains the candidate's information that is needed for the
@@ -53,6 +54,9 @@ func (node *RingNode) RequestVote(receivedVote RingVote, acknowledge *string) er
 	node.mutex.Lock()
 	defer node.mutex.Unlock()
 
+	fmt.Printf("Node %d: Received vote for candidate %d (isTerminal: %v)\n",
+		node.selfID, receivedVote.CandidateID, receivedVote.IsTerminal)
+
 	fmt.Println("Vote message received for ", receivedVote.CandidateID)
 
 	ackReply := "nil"
@@ -62,6 +66,9 @@ func (node *RingNode) RequestVote(receivedVote RingVote, acknowledge *string) er
 		return nil
 	}
 
+	if receivedVote.CandidateID > node.highestSeenID {
+		node.highestSeenID = receivedVote.CandidateID
+	}
 	// Leader has been identified
 	if receivedVote.IsTerminal {
 		if node.leaderID != receivedVote.CandidateID {
@@ -70,7 +77,7 @@ func (node *RingNode) RequestVote(receivedVote RingVote, acknowledge *string) er
 			// Pass result of the election to nextNode
 			theNextVote := RingVote{
 				CandidateID: receivedVote.CandidateID,
-				IsTerminal:  receivedVote.IsTerminal,
+				IsTerminal:  true,
 			}
 			go func(server ServerConnection) {
 				err := server.rpcConnection.Call("RingNode.RequestVote", theNextVote, &ackReply)
@@ -89,6 +96,7 @@ func (node *RingNode) RequestVote(receivedVote RingVote, acknowledge *string) er
 		// If node have not already nominated itself as leader,
 		// then pass nomiation of selfID to nextNode
 		if !node.nominatedSelf {
+			node.nominatedSelf = true
 			theNextVote := RingVote{
 				CandidateID: node.selfID,
 				IsTerminal:  false,
@@ -111,6 +119,7 @@ func (node *RingNode) RequestVote(receivedVote RingVote, acknowledge *string) er
 			CandidateID: receivedVote.CandidateID,
 			IsTerminal:  false,
 		}
+		print(node.nextNode.serverID)
 		go func(server ServerConnection) {
 			err := server.rpcConnection.Call("RingNode.RequestVote", theNextVote, &ackReply)
 			if err != nil {
@@ -125,6 +134,7 @@ func (node *RingNode) RequestVote(receivedVote RingVote, acknowledge *string) er
 	// Final case is when node receives its own nomination
 	fmt.Println("Received self vote again. Yay, node is leader!")
 	// Pass nomiation of candidateID to nextNode
+	node.leaderID = node.selfID
 	theNextVote := RingVote{
 		CandidateID: receivedVote.CandidateID,
 		IsTerminal:  true,
@@ -155,31 +165,33 @@ func (node *RingNode) LeaderElection() {
 		// <-node.electionTimeout.C
 
 		// Check if node is already leader so loop does not continue
+		node.mutex.Lock()
 		if node.leaderID == node.selfID {
 			fmt.Println("Ending leader election because I am now leader")
 			return
 		}
-
+		node.mutex.Unlock()
 		// Initialize election by incrementing term and voting for self
-		arguments := RingVote{
-			CandidateID: node.selfID,
-			IsTerminal:  false,
-		}
-		ackReply := "nil"
-
-		// Sending nomination message
-		fmt.Println("Requesting votes from ", node.nextNode.serverID, node.nextNode.Address)
-		go func(server ServerConnection) {
-			err := server.rpcConnection.Call("RingNode.RequestVote", arguments, &ackReply)
-			if err != nil {
-				return
+		if node.leaderID == -1 && node.highestSeenID < node.selfID {
+			arguments := RingVote{
+				CandidateID: node.selfID,
+				IsTerminal:  false,
 			}
-		}(node.nextNode)
+			ackReply := "nil"
 
-		// If you want leader election to be restarted periodically,
-		// Uncomment the next line
-		// I do not recommend when debugging
+			// Sending nomination message
+			fmt.Println("Requesting votes from ", node.nextNode.serverID, node.nextNode.Address)
+			go func(server ServerConnection) {
+				err := server.rpcConnection.Call("RingNode.RequestVote", arguments, &ackReply)
+				if err != nil {
+					return
+				}
+			}(node.nextNode)
 
+			// If you want leader election to be restarted periodically,
+			// Uncomment the next line
+			// I do not recommend when debugging
+		}
 		// node.resetElectionTimeout()
 	}
 }
