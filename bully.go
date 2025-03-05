@@ -1,23 +1,27 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
+	"log"
+	"net/http"
 	"net/rpc"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 )
 
-var Bullies []ServerConnection // all of the bully nodes
-var BullyIDS []int
+var Bullies []ServerConnection // all of the bully nodes ?should we have it here or in BullyNode?
 
 // BullyNode represents a single node in the cluster
 type BullyNode struct {
 	mutex  sync.Mutex // prevent race condition when multiple nodes tries to access shared data at once
 	selfID int
-
 	leaderID int
 	myPort   string
 	state    string //"Normal", "Election", "Leader"
-
+	nominatedSelf bool
 	notifiedAllHigherNodes bool
 
 	electionTimeout         *time.Timer
@@ -38,6 +42,21 @@ type ServerConnection struct {
 	serverID      int
 	address       string
 	rpcConnection *rpc.Client
+}
+
+// ElectionMessage represents messages exchanged during election
+type ElectionMessage struct {
+	SenderID int
+}
+
+// CoordinatorMessage is sent when a node declares itself leader
+type CoordinatorMessage struct {
+	LeaderID int
+}
+
+// OKMessage is sent in response to an Election message
+type OKMessage struct {
+	SenderID int
 }
 
 // -----------------------------------------------------------------------------
@@ -69,7 +88,39 @@ func (node *BullyNode) messageLeader() error {
 }
 
 // election process
-func (node *BullyNode) startElection() error {
+func (node *BullyNode) startElection(args *ElectionMessage, reply *string) error {
+	node.mutex.Lock()
+	defer node.mutex.Unlock()
+
+	fmt.Printf("Node %d: Received election message from Node %d\n", node.selfID, args.SenderID)
+	*reply = "ack"
+
+	// If my ID is higher, I will respond with OK and start my own election if needed
+	if node.selfID > args.SenderID {
+		fmt.Printf("Node %d: Sending OK to Node %d\n", node.selfID, args.SenderID)
+
+		// Send OK message to the sender
+		for _, conn := range node.otherNodes {
+			if conn.serverID == args.SenderID {
+				okMsg := OKMessage{SenderID: node.selfID}
+				var okReply string
+				go func(server ServerConnection) {
+					err := server.rpcConnection.Call("BullyNode.ReceiveOK", okMsg, &okReply)
+					if err != nil {
+						log.Printf("Error sending OK: %v", err)
+					}
+				}(conn)
+				break
+			}
+		}
+
+		// Start my own election if I haven't already
+		if !node.nominatedSelf {
+			node.nominatedSelf = true
+			go node.initiateElection()
+		}
+	}
+
 	return nil
 }
 
@@ -86,7 +137,16 @@ func (node *BullyNode) replyOK() error {
 	return nil
 }
 
-func (node *BullyNode) receiveOK() error {
+func (node *BullyNode) ReceiveOK(args *OKMessage, reply *string) error {
+	node.mutex.Lock()
+	defer node.mutex.Unlock()
+
+	fmt.Printf("Node %d: Received OK from Node %d\n", node.selfID, args.SenderID)
+	*reply = "ack"
+
+	// Someone with a higher ID responded, so I can't be the leader
+	node.nominatedSelf = false
+
 	return nil
 }
 
