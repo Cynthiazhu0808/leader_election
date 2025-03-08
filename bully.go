@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-// BullyNode represents a node in the distributed system
 type BullyNode struct {
 	mutex         sync.Mutex
 	selfID        int
@@ -25,32 +24,26 @@ type BullyNode struct {
 	isLeader      bool
 }
 
-// Message interface for different message types
 type Message interface{}
 
-// ElectionMessage represents messages exchanged during election
 type ElectionMessage struct {
 	SenderID int
 }
 
-// CoordinatorMessage is sent when a node declares itself leader
 type CoordinatorMessage struct {
 	LeaderID int
 }
 
-// OKMessage is sent in response to an Election message
 type OKMessage struct {
 	SenderID int
 }
 
-// ServerConnection represents a connection to another node
 type ServerConnection struct {
 	serverID      int
 	Address       string
 	rpcConnection *rpc.Client
 }
 
-// StartElection is called by a node to initiate an election
 func (node *BullyNode) StartElection(args *ElectionMessage, reply *string) error {
 	node.mutex.Lock()
 	defer node.mutex.Unlock()
@@ -87,7 +80,6 @@ func (node *BullyNode) StartElection(args *ElectionMessage, reply *string) error
 	return nil
 }
 
-// ReceiveOK handles OK responses to election messages
 func (node *BullyNode) ReceiveOK(args *OKMessage, reply *string) error {
 	node.mutex.Lock()
 	defer node.mutex.Unlock()
@@ -101,7 +93,6 @@ func (node *BullyNode) ReceiveOK(args *OKMessage, reply *string) error {
 	return nil
 }
 
-// AnnounceCoordinator is called when a node declares itself as leader
 func (node *BullyNode) AnnounceCoordinator(args *CoordinatorMessage, reply *string) error {
 	node.mutex.Lock()
 	defer node.mutex.Unlock()
@@ -116,7 +107,6 @@ func (node *BullyNode) AnnounceCoordinator(args *CoordinatorMessage, reply *stri
 	return nil
 }
 
-// GetLeaderID returns the current leader ID
 func (node *BullyNode) GetLeaderID(args int, reply *int) error {
 	node.mutex.Lock()
 	defer node.mutex.Unlock()
@@ -125,7 +115,6 @@ func (node *BullyNode) GetLeaderID(args int, reply *int) error {
 	return nil
 }
 
-// initiateElection starts an election by sending election messages to all higher-ID nodes
 func (node *BullyNode) initiateElection() {
 	node.mutex.Lock()
 	myID := node.selfID
