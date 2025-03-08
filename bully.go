@@ -122,7 +122,6 @@ func (node *BullyNode) initiateElection() {
 
 	fmt.Printf("Node %d: Initiating election\n", myID)
 
-	// Send election message to all nodes with higher IDs
 	electionMsg := ElectionMessage{SenderID: myID}
 	receivedResponse := false
 	var wg sync.WaitGroup
@@ -186,7 +185,6 @@ func (node *BullyNode) initiateElection() {
 
 // StartElectionProcess periodically checks if election is needed
 func (node *BullyNode) StartElectionProcess() {
-	// Initial delay to let system stabilize
 	time.Sleep(2 * time.Second)
 
 	// Initial election
@@ -212,14 +210,12 @@ func (node *BullyNode) StartElectionProcess() {
 }
 
 func main() {
-	// Parse command line arguments
 	args := os.Args
 	if len(args) < 3 {
 		fmt.Println("Usage: go run peer.go <node_id> <config_file>")
 		return
 	}
 
-	// Get this server's ID
 	myID, err := strconv.Atoi(args[1])
 	if err != nil {
 		log.Fatalf("Invalid node ID: %v", err)
@@ -262,7 +258,6 @@ func main() {
 		log.Fatalf("Error reading config file: %v", err)
 	}
 
-	// Register RPC
 	err = rpc.Register(node)
 	if err != nil {
 		log.Fatalf("Error registering RPC: %v", err)
@@ -270,7 +265,6 @@ func main() {
 
 	rpc.HandleHTTP()
 
-	// Start HTTP server
 	go func() {
 		err := http.ListenAndServe(node.myPort, nil)
 		if err != nil {
@@ -340,7 +334,6 @@ func main() {
 	fmt.Printf("Node %d: Starting election process\n", myID)
 	go node.StartElectionProcess()
 
-	// Keep the process running
 	var wg sync.WaitGroup
 	wg.Add(1)
 	wg.Wait()
