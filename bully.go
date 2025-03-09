@@ -25,8 +25,6 @@ type BullyNode struct {
 	isLeader      bool
 }
 
-type Message interface{}
-
 // ?? maybe we can specify the type inside the struct instead of having three different similar functioning struct?
 type ElectionMessage struct {
 	//messageType MessageType
