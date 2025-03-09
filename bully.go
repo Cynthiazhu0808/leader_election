@@ -8,6 +8,7 @@ import (
 	"net/rpc"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -19,18 +20,20 @@ type BullyNode struct {
 	myPort        string
 	otherNodes    []ServerConnection
 	nominatedSelf bool
-	receiveChan   chan Message
+	receiveChan   chan Message // difference between the channels
 	electionChan  chan Message
 	isLeader      bool
 }
 
 type Message interface{}
 
+// ?? maybe we can specify the type inside the struct instead of having three different similar functioning struct?
 type ElectionMessage struct {
+	//messageType MessageType
 	SenderID int
 }
 
-type CoordinatorMessage struct {
+type LeaderMessage struct {
 	LeaderID int
 }
 
@@ -51,12 +54,13 @@ func (node *BullyNode) StartElection(args *ElectionMessage, reply *string) error
 	fmt.Printf("Node %d: Received election message from Node %d\n", node.selfID, args.SenderID)
 	*reply = "ack"
 
-	// If my ID is higher, I will respond with OK and start my own election if needed
+	// If the selfID is greater than the receivedID, respond OK  ??and start my own election if needed
+	// ?? why are we starting a new election if needed? Oh, do you mean the nominating self?
 	if node.selfID > args.SenderID {
 		fmt.Printf("Node %d: Sending OK to Node %d\n", node.selfID, args.SenderID)
 
 		// Send OK message to the sender
-		for _, conn := range node.otherNodes {
+		for _, conn := range node.otherNodes { // is there a faster way rather than iterating through all to find this one node
 			if conn.serverID == args.SenderID {
 				okMsg := OKMessage{SenderID: node.selfID}
 				var okReply string
@@ -65,18 +69,17 @@ func (node *BullyNode) StartElection(args *ElectionMessage, reply *string) error
 					if err != nil {
 						log.Printf("Error sending OK: %v", err)
 					}
-				}(conn)
+				}(conn) // ?? What does this do?
 				break
 			}
 		}
 
-		// Start my own election if I haven't already
+		// Start Self Election
 		if !node.nominatedSelf {
 			node.nominatedSelf = true
-			go node.initiateElection()
+			go node.initiateElection() //?? Doesn't we only need to check if higher functions are alive or not? The naming is a little confusing with start and initiate election
 		}
 	}
-
 	return nil
 }
 
@@ -93,11 +96,11 @@ func (node *BullyNode) ReceiveOK(args *OKMessage, reply *string) error {
 	return nil
 }
 
-func (node *BullyNode) AnnounceCoordinator(args *CoordinatorMessage, reply *string) error {
+func (node *BullyNode) AnnounceLeader(args *LeaderMessage, reply *string) error {
 	node.mutex.Lock()
 	defer node.mutex.Unlock()
 
-	fmt.Printf("Node %d: Received coordinator announcement from Node %d\n", node.selfID, args.LeaderID)
+	fmt.Printf("Node %d: Received Leader announcement from Node %d\n", node.selfID, args.LeaderID)
 	*reply = "ack"
 
 	// Update leader information
@@ -146,7 +149,7 @@ func (node *BullyNode) initiateElection() {
 	wg.Wait()
 
 	if receivedResponse {
-		fmt.Printf("Node %d: Election ongoing, waiting for coordinator message\n", myID)
+		fmt.Printf("Node %d: Election ongoing, waiting for leader message\n", myID)
 	}
 
 	// Wait for responses
@@ -167,16 +170,16 @@ func (node *BullyNode) initiateElection() {
 		fmt.Printf("Node %d: No higher nodes responded, declaring self as leader\n", myID)
 
 		// Announce leadership to all other nodes
-		coordMsg := CoordinatorMessage{LeaderID: myID}
+		leadMsg := LeaderMessage{LeaderID: myID}
 
 		for _, conn := range node.otherNodes {
 			fmt.Printf("Node %d: Announcing leadership to Node %d\n", myID, conn.serverID)
 			var reply string
 
 			go func(server ServerConnection) {
-				err := server.rpcConnection.Call("BullyNode.AnnounceCoordinator", coordMsg, &reply)
+				err := server.rpcConnection.Call("BullyNode.AnnounceLeader", leadMsg, &reply)
 				if err != nil {
-					log.Printf("Error announcing coordinator: %v", err)
+					log.Printf("Error announcing leader: %v", err)
 				}
 			}(conn)
 		}
@@ -211,17 +214,21 @@ func (node *BullyNode) StartElectionProcess() {
 
 func main() {
 	args := os.Args
+	// The assumption here is that the command line arguemnts will contain
+	// This server's ID (zero-based), location and name of the cluster configuration file
 	if len(args) < 3 {
-		fmt.Println("Usage: go run peer.go <node_id> <config_file>")
+		fmt.Println("Please input go run peer.go <node_id> <config_file>")
 		return
 	}
 
+	// Read the values sent in the command line
+	// Get this server's ID (same as its index for simplicity)
 	myID, err := strconv.Atoi(args[1])
 	if err != nil {
-		log.Fatalf("Invalid node ID: %v", err)
+		log.Fatalf("Invalid node ID: %v, please try again", err)
 	}
 
-	// Read configuration file
+	// Get the information of the cluster configuration file containing information on other servers
 	file, err := os.Open(args[2])
 	if err != nil {
 		log.Fatalf("Error opening config file: %v", err)
@@ -238,13 +245,52 @@ func main() {
 		mutex:         sync.Mutex{},
 	}
 
-	// Read all server addresses from config file
-	scanner := bufio.NewScanner(file)
+	// Static port creation start
+	// Read the IP:port info from the cluster configuration file
+	// scanner := bufio.NewScanner(file)
+	// addresses := make([]string, 0)
+	// index := 0
+
+	// for scanner.Scan() {
+	// 	// Get server IP:port
+	// 	address := scanner.Text()
+	// 	// Prints date, time, and index of the node being processed
+	// 	log.Printf(address, index)
+
+	// 	if index == myID {
+	// 		node.myPort = address
+	// 	}
+
+	// 	addresses = append(addresses, address)
+	// 	index++
+	// }
+
+	// if err := scanner.Err(); err != nil {
+	// 	log.Fatalf("Error reading config file: %v", err)
+	// }
+	// Static port creation end
+
+	// Dynamic port creation start
+	basePort := 5000       //starting port number
+	baseIP := "localhost:" // Base IP address
 	addresses := make([]string, 0)
 	index := 0
 
-	for scanner.Scan() {
-		address := scanner.Text()
+	fmt.Println("Please enter node info and type 'done' when finished:")
+	scanner := bufio.NewScanner(os.Stdin)
+
+	for {
+		fmt.Printf("Please input node %d (or 'done' to finish): ", index)
+		scanner.Scan()
+		input := scanner.Text()
+
+		if strings.ToLower(input) == "done" {
+			break
+		}
+
+		// generate new adderesses with incremental port number
+		address := fmt.Sprintf("%s:%d", baseIP, basePort+index)
+		log.Printf("Node %d address: %s", index, address)
 
 		if index == myID {
 			node.myPort = address
@@ -254,9 +300,12 @@ func main() {
 		index++
 	}
 
-	if err := scanner.Err(); err != nil {
-		log.Fatalf("Error reading config file: %v", err)
+	// check if we have at least three node
+	if len(addresses) < 3 {
+		log.Fatal("Not Enough nodes were specified!")
 	}
+
+	// Dynamic port creation ends
 
 	err = rpc.Register(node)
 	if err != nil {
@@ -264,57 +313,59 @@ func main() {
 	}
 
 	rpc.HandleHTTP()
-
+	// multi thread this process
 	go func() {
 		err := http.ListenAndServe(node.myPort, nil)
+		log.Printf("serving rpc on port" + node.myPort)
 		if err != nil {
 			log.Fatalf("Error starting HTTP server: %v", err)
 		}
 	}()
 
-	log.Printf("Node %d: RPC server started on %s", node.selfID, node.myPort)
+	// wait for all servers to start, debugging use
+	// time.Sleep(3 * time.Second)
 
-	// Wait a moment for all servers to start
-	time.Sleep(3 * time.Second)
-
-	// Connect to all other nodes
-	for i, addr := range addresses {
+	// Connect to all other nodes start
+	for i, address := range addresses {
 		if i == myID {
-			continue // Skip self
+			continue // skip self
 		}
 
-		fmt.Printf("Node %d: Attempting to connect to Node %d at %s\n",
-			myID, i, addr)
+		fmt.Printf("Bully #%d: Tyring to connect to Bully #%d at %s\n",
+			myID, i, address)
 
-		// Try to establish connection to other node
+		// establish connection to other bullyNodes
 		var client *rpc.Client
-		var connErr error
+		var err error
 
+		// error handeling for connection to other node
 		maxRetries := 5
 		for retry := 0; retry < maxRetries; retry++ {
-			client, connErr = rpc.DialHTTP("tcp", addr)
-			if connErr == nil {
+			client, err = rpc.DialHTTP("tcp", address)
+			if err == nil {
 				break
 			}
-
-			log.Printf("Connection attempt %d to Node %d failed: %v. Retrying...",
-				retry+1, i, connErr)
+			log.Printf("New connection attempt %d to connect to bully %d: %v. Retrying...",
+				retry+1, i, err)
 			time.Sleep(2 * time.Second)
 		}
 
-		if connErr != nil {
+		if err != nil {
+			// Record it in log
 			log.Printf("Failed to connect to Node %d after %d attempts: %v",
-				i, maxRetries, connErr)
+				i, maxRetries, err)
 			continue
 		}
 
-		// Save connection information
+		// Once connection is established, save connection information in otherNodes
 		node.otherNodes = append(node.otherNodes,
-			ServerConnection{i, addr, client})
-		fmt.Printf("Node %d: Connected to Node %d at %s\n", myID, i, addr)
+			ServerConnection{i, address, client})
+		// Record that in log
+		fmt.Printf("Node %d: Connected to Node %d at %s\n", myID, i, address)
 	}
+	// Connect to all other nodes end
 
-	// Create a simple HTTP endpoint to check the current leader
+	// Leader Checking starts: Create HTTP endpoint to check the current leader
 	http.HandleFunc("/leader", func(w http.ResponseWriter, r *http.Request) {
 		node.mutex.Lock()
 		leader := node.leaderID
@@ -329,12 +380,13 @@ func main() {
 			fmt.Fprintf(w, "Node %d: No leader elected yet\n", myID)
 		}
 	})
+	// Leader checking ends
 
 	// Start election process
-	fmt.Printf("Node %d: Starting election process\n", myID)
-	go node.StartElectionProcess()
-
+	// wait why is there no timer? who is the one starting the process?
 	var wg sync.WaitGroup
 	wg.Add(1)
+	fmt.Printf("Node %d: Started the election process\n", myID)
+	go node.StartElectionProcess()
 	wg.Wait()
 }
